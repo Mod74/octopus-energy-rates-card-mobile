@@ -1,122 +1,299 @@
+/**
+ * Octopus Energy Rates Card (Mobile-Friendly Edition)
+ * GitHub: https://github.com/Mod74/octopus-energy-rates-card-mobile
+ * Forked from: lozzd/octopus-energy-rates-card
+ *
+ * Adds responsive multi-column layouts, mobile breakpoint detection,
+ * compact mobile view, container query compatibility, and HACS compliance.
+ */
 class OctopusEnergyRatesCard extends HTMLElement {
+    constructor() {
+        super();
+        this._cardWidth = 0;
+        this._resizeObserver = null;
+        this._isMobile = false;
+        this._renderedCols = null;
+    }
+
+    connectedCallback() {
+        if (!this._resizeObserver && typeof ResizeObserver !== 'undefined') {
+            this._resizeObserver = new ResizeObserver((entries) => {
+                for (const entry of entries) {
+                    const width = entry.contentRect ? entry.contentRect.width : this.getBoundingClientRect().width;
+                    if (width && Math.abs(width - this._cardWidth) > 15) {
+                        this._cardWidth = width;
+                        this._handleResize();
+                    }
+                }
+            });
+            this._resizeObserver.observe(this);
+        }
+    }
+
+    disconnectedCallback() {
+        if (this._resizeObserver) {
+            this._resizeObserver.disconnect();
+            this._resizeObserver = null;
+        }
+    }
+
+    _handleResize() {
+        if (!this._config) return;
+        const breakpoint = this._config.mobile_breakpoint || 460;
+        const currentIsMobile = this._cardWidth <= breakpoint;
+        
+        // If mobile state or effective column count changed, re-render if hass state exists
+        if (currentIsMobile !== this._isMobile) {
+            this._isMobile = currentIsMobile;
+            if (this._hass) {
+                this._render();
+            }
+        }
+    }
+
     set hass(hass) {
+        this._hass = hass;
+        this._render();
+    }
+
+    _render() {
+        const hass = this._hass;
+        if (!hass) return;
         const config = this._config;
+        if (!config) return;
+
+        // Initialise the lastRefreshTimestamp
+        if (!this.lastRefreshTimestamp) {
+            this.lastRefreshTimestamp = 0;
+        }
+
+        // Check if the interval has passed
+        const currentTime = Date.now();
+        const cardRefreshIntervalSecondsInMilliseconds = (config.cardRefreshIntervalSeconds || 60) * 1000;
+        if (this.content && (currentTime - this.lastRefreshTimestamp < cardRefreshIntervalSecondsInMilliseconds)) {
+            return;
+        }
+        this.lastRefreshTimestamp = currentTime;
+
+        // Determine width and mobile state
+        if (!this._cardWidth && typeof this.getBoundingClientRect === 'function') {
+            const rect = this.getBoundingClientRect();
+            if (rect.width > 0) {
+                this._cardWidth = rect.width;
+            }
+        }
+        const breakpoint = config.mobile_breakpoint || 460;
+        const isMobileByWindow = (typeof window !== 'undefined' && window.innerWidth <= breakpoint);
+        this._isMobile = this._cardWidth > 0 ? (this._cardWidth <= breakpoint) : isMobileByWindow;
+
+        // Determine effective column count
+        let effectiveCols = config.cols || 1;
+        if (config.auto_cols) {
+            const width = this._cardWidth || (typeof window !== 'undefined' ? window.innerWidth : 400);
+            if (width < 340) {
+                effectiveCols = 1;
+            } else if (width < 620) {
+                effectiveCols = 2;
+            } else if (width < 900) {
+                effectiveCols = 3;
+            } else {
+                effectiveCols = Math.max(config.cols || 3, 3);
+            }
+        } else if (this._isMobile) {
+            effectiveCols = (config.mobile_cols !== undefined && config.mobile_cols !== null) 
+                ? config.mobile_cols 
+                : 1;
+        }
+
         if (!this.content) {
             const card = document.createElement('ha-card');
             card.header = config.title;
             this.content = document.createElement('div');
-            this.content.style.padding = '0 16px 16px';
+            this.content.className = 'card-content-wrapper';
 
             const style = document.createElement('style');
             style.textContent = `
-            table {
-                width: 100%;
-                padding: 0px;
-                spacing: 0px;
-            }
-            table.sub_table {
-                border-collapse: seperate;
-                border-spacing: 0px 2px;
-            }
-            table.main {
-                padding: 0px;
-            }
-            td.time_highlight {
-                font-weight: bold;
-                color: white;
-            }
-            td.current {
-                position: relative;
-            }    
-            td.current:before{
-                content: "";
-                position: absolute;
-                top: 0;
-                right: 0;
-                width: 0; 
-                height: 0; 
+            :host {
                 display: block;
-                border-top: calc(var(--ha-font-size-l) * .65) solid transparent;
-                border-bottom: calc(var(--ha-font-size-l) * .65) solid transparent;
-
-                border-right: 10px solid;
+            }
+            .card-content-wrapper {
+                padding: 0 16px 16px;
+                box-sizing: border-box;
+                width: 100%;
+            }
+            .rates-container {
+                width: 100%;
+                box-sizing: border-box;
+                container-type: inline-size;
+                container-name: octopus-rates;
+            }
+            .rates-wrapper {
+                display: flex;
+                flex-direction: row;
+                flex-wrap: wrap;
+                gap: 8px 12px;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            .rates-col {
+                flex: 1 1 0px;
+                min-width: 0;
+                box-sizing: border-box;
+            }
+            .rates-col table.sub_table {
+                width: 100%;
+                border-collapse: separate;
+                border-spacing: 0px 3px;
+                box-sizing: border-box;
             }
             thead th {
                 text-align: left;
                 padding: 0px;
             }
             td {
-                vertical-align: top;
-                padding: 2px;
-                spacing: 0px;
+                vertical-align: middle;
+                padding: 2px 4px;
+                box-sizing: border-box;
             }
-            tr.rate_row{
-                text-align:center;
-                width:80px;
+            tr.rate_row {
+                text-align: center;
+                transition: transform 0.1s ease;
+            }
+            tr.rate_row:hover {
+                filter: brightness(1.08);
             }
             td.time {
-                text-align:center;
+                text-align: center;
                 vertical-align: middle;
+                font-size: var(--ha-font-size-m, 13px);
+                font-family: inherit;
+                border-top-left-radius: 6px;
+                border-bottom-left-radius: 6px;
+                padding: 3px 6px;
+                white-space: nowrap;
+                color: var(--primary-text-color, #e0e0e0);
+                letter-spacing: -0.2px;
             }
-            td.time_red{
-                border-bottom: 1px solid Tomato;
+            td.time_highlight {
+                font-weight: bold;
+                color: #ffffff;
             }
-            td.time_orange{
-                border-bottom: 1px solid orange;
+            td.current {
+                position: relative;
+                font-weight: bold;
+            }    
+            td.current:before {
+                content: "";
+                position: absolute;
+                top: 50%;
+                right: 0;
+                transform: translateY(-50%);
+                width: 0; 
+                height: 0; 
+                display: block;
+                border-top: 6px solid transparent;
+                border-bottom: 6px solid transparent;
+                border-right: 8px solid var(--primary-text-color, #ffffff);
             }
-            td.time_green{
-                border-bottom: 1px solid MediumSeaGreen;
+            td.time_red {
+                border-bottom: 2px solid #ef4444;
+            }
+            td.time_orange {
+                border-bottom: 2px solid #f97316;
+            }
+            td.time_green {
+                border-bottom: 2px solid #22c55e;
             }
             td.time_lightgreen {
-                border-bottom: 1px solid ForestGreen;
+                border-bottom: 2px solid #16a34a;
             }
-            td.time_blue{
-                border-bottom: 1px solid #391CD9;
+            td.time_blue {
+                border-bottom: 2px solid #3b82f6;
             }
-            td.time_cheapest{
-                border-bottom: 1px solid LightGreen;
+            td.time_cheapest {
+                border-bottom: 2px solid #4ade80;
             }
-            td.time_cheapestblue{
-                border-bottom: 1px solid LightBlue;
+            td.time_cheapestblue {
+                border-bottom: 2px solid #38bdf8;
             }
             td.rate {
-                color:white;
-                text-align:center;
+                color: white;
+                text-align: center;
                 vertical-align: middle;
-                width:80px;
-
-                border-top-right-radius:15px;
-                border-bottom-right-radius:15px;
+                width: 78px;
+                min-width: 68px;
+                font-weight: 700;
+                font-size: var(--ha-font-size-m, 13px);
+                font-variant-numeric: tabular-nums;
+                border-top-right-radius: 12px;
+                border-bottom-right-radius: 12px;
+                padding: 3px 6px;
+                box-sizing: border-box;
+                white-space: nowrap;
+                letter-spacing: -0.2px;
             }
             td.red {
-                border: 2px solid Tomato;
-                background-color: Tomato;
+                border: 1px solid #dc2626;
+                background-color: #ef4444;
             }
             td.orange {
-                border: 2px solid orange;
-                background-color: orange;
+                border: 1px solid #ea580c;
+                background-color: #f97316;
             }
             td.green {
-                border: 2px solid MediumSeaGreen;
-                background-color: MediumSeaGreen;
+                border: 1px solid #16a34a;
+                background-color: #22c55e;
             }
             td.lightgreen {
-                border: 2px solid ForestGreen;
-                background-color: ForestGreen;
+                border: 1px solid #15803d;
+                background-color: #16a34a;
             }
             td.blue {
-                border: 2px solid #391CD9;
-                background-color: #391CD9;
+                border: 1px solid #1d4ed8;
+                background-color: #2563eb;
             }
             td.cheapest {
-                color: black;
-                border: 2px solid LightGreen;
-                background-color: LightGreen;
+                color: #0f172a;
+                font-weight: 800;
+                border: 1px solid #4ade80;
+                background-color: #86efac;
             }
             td.cheapestblue {
-                color: black;
-                border: 2px solid LightBlue;
-                background-color: LightBlue;
+                color: #0f172a;
+                font-weight: 800;
+                border: 1px solid #38bdf8;
+                background-color: #bae6fd;
+            }
+
+            /* Mobile-specific responsive rules */
+            .is-mobile .card-content-wrapper {
+                padding: 0 8px 12px;
+            }
+            .is-mobile .rates-wrapper {
+                gap: 4px;
+            }
+            .is-mobile .compact-mode td.time {
+                font-size: 12px;
+                padding: 2px 4px;
+            }
+            .is-mobile .compact-mode td.rate {
+                font-size: 12px;
+                padding: 2px 4px;
+                width: 68px;
+                min-width: 62px;
+                border-top-right-radius: 8px;
+                border-bottom-right-radius: 8px;
+            }
+            .is-mobile .compact-mode table.sub_table {
+                border-spacing: 0px 2px;
+            }
+            @media (max-width: 480px) {
+                .card-content-wrapper {
+                    padding: 0 10px 12px;
+                }
+                .rates-wrapper {
+                    gap: 6px;
+                }
             }
             `;
             card.appendChild(style);
@@ -124,39 +301,21 @@ class OctopusEnergyRatesCard extends HTMLElement {
             this.appendChild(card);
         }
 
-        // Initialise the lastRefreshTimestamp
-        if (!this.lastRefreshTimestamp) {
-            // Store the timestamp of the last refresh
-            this.lastRefreshTimestamp = 0;
-        }
-
-        // Check if the interval has passed
-        const currentTime = Date.now();
-        const cardRefreshIntervalSecondsInMilliseconds = config.cardRefreshIntervalSeconds * 1000;
-        if (!(currentTime - this.lastRefreshTimestamp >= cardRefreshIntervalSecondsInMilliseconds)) {
-            return
-        }
-        this.lastRefreshTimestamp = currentTime;
-
         const colours_import = ['lightgreen', 'green', 'orange', 'red', 'blue', 'cheapest', 'cheapestblue'];
         const colours_export = ['red', 'green', 'orange', 'green'];
         const currentEntityId = config.currentEntity;
         const futureEntityId = config.futureEntity;
         const pastEntityId = config.pastEntity;
-        // Create an empty array to store the parsed attributes
+
         const allSlotsTargetTimes = [];
-        const targetTimesEntities = config.targetTimesEntities && Object.keys(config.targetTimesEntities) || [];
-        // Iterate through each entity in targetTimesEntities
+        const targetTimesEntities = (config.targetTimesEntities && Object.keys(config.targetTimesEntities)) || [];
         for (const entityId of targetTimesEntities) {
             const entityTimesState = hass.states[entityId];
-            const entityExtraData = config.targetTimesEntities[entityId] || [];
+            const entityExtraData = config.targetTimesEntities[entityId] || {};
             const backgroundColour = entityExtraData.backgroundColour || "Navy";
             const timePrefix = entityExtraData.prefix || "";
-            // Access the attributes of the current entity
             const entityAttributes = entityTimesState ? this.reverseObject(entityTimesState.attributes) : {};
-            // Get the target_times array, handling potential undefined cases
             const targetTimes = entityAttributes.target_times || [];
-            // Iterate through each target time and push it individually
             for (const targetTime of targetTimes) {
                 allSlotsTargetTimes.push({
                     start: targetTime.start,
@@ -171,16 +330,14 @@ class OctopusEnergyRatesCard extends HTMLElement {
         var mediumlimit = config.mediumlimit;
         var highlimit = config.highlimit;
 
-        // Check if we've received a number, if not, assume they are entities
-        // and read them from the state
-        if (isNaN(lowlimit)) {
-            lowlimit = parseFloat(hass.states[lowlimit].state)
+        if (isNaN(lowlimit) && hass.states[lowlimit]) {
+            lowlimit = parseFloat(hass.states[lowlimit].state);
         }
-        if (isNaN(mediumlimit)) {
-            mediumlimit = parseFloat(hass.states[mediumlimit].state)
+        if (isNaN(mediumlimit) && hass.states[mediumlimit]) {
+            mediumlimit = parseFloat(hass.states[mediumlimit].state);
         }
-        if (isNaN(highlimit)) {
-            highlimit = parseFloat(hass.states[highlimit].state)
+        if (isNaN(highlimit) && hass.states[highlimit]) {
+            highlimit = parseFloat(hass.states[highlimit].state);
         }
 
         const unitstr = config.unitstr;
@@ -190,14 +347,12 @@ class OctopusEnergyRatesCard extends HTMLElement {
         const hour12 = config.hour12;
         const cheapest = config.cheapest;
         const combinerate = config.combinerate;
-        const multiplier = config.multiplier
-        const rateListLimit = config.rateListLimit
+        const multiplier = config.multiplier;
+        const rateListLimit = config.rateListLimit;
         const navigatorLanguage = (typeof navigator !== 'undefined') ? (navigator.languages && navigator.languages.length ? navigator.languages[0] : navigator.language) : 'en-US';
         const language = hass.locale?.language || hass.language || navigatorLanguage || 'en-US';
         const isValidTimeZone = (tz) => {
-            if (!tz) {
-                return false;
-            }
+            if (!tz) return false;
             try {
                 new Intl.DateTimeFormat(undefined, { timeZone: tz });
                 return true;
@@ -221,123 +376,94 @@ class OctopusEnergyRatesCard extends HTMLElement {
             timeZone: timeZone,
         });
         var colours = (config.exportrates ? colours_export : colours_import);
-        var rates_totalnumber = 0;
         var combinedRates = [];
 
-        // Grab the rates which are stored as an attribute of the sensor
         const paststate = hass.states[pastEntityId];
         const currentstate = hass.states[currentEntityId];
         const futurestate = hass.states[futureEntityId];
 
-        // Get Limit entity values
         const limitEntity = config.limitEntity;
-        const limitEntityState = hass.states[limitEntity];
+        const limitEntityState = limitEntity ? hass.states[limitEntity] : null;
         const limitHighMult = config.highLimitMultiplier;
         const limitMedMult = config.mediumLimitMultiplier;
 
-        // Create an empty array to store the parsed attributes
         var additionalDynamicLimits = [];
-        const additionalDynamicLimitsEntities = config.additionalDynamicLimits && Object.keys(config.additionalDynamicLimits) || [];
-        // Iterate through each entity in additionalDynamicLimitsEntities
+        const additionalDynamicLimitsEntities = (config.additionalDynamicLimits && Object.keys(config.additionalDynamicLimits)) || [];
         for (const entityId of additionalDynamicLimitsEntities) {
-            const limitExtraData = config.additionalDynamicLimits[entityId] || [];
+            const limitExtraData = config.additionalDynamicLimits[entityId] || {};
             const backgroundColour = limitExtraData.backgroundColour || "";
             const timePrefix = limitExtraData.prefix || "";
 
-            const limit = parseFloat(hass.states[entityId].state);
-            if (!isNaN(limit)) {
-                additionalDynamicLimits.push({
-                    limit: limit,
-                    color: backgroundColour,
-                    timePrefix: timePrefix,
-                })
-            } else {
-                console.warn("Couldn't parse entity state ${entityId} as a float")
+            if (hass.states[entityId]) {
+                const limit = parseFloat(hass.states[entityId].state);
+                if (!isNaN(limit)) {
+                    additionalDynamicLimits.push({
+                        limit: limit,
+                        color: backgroundColour,
+                        timePrefix: timePrefix,
+                    });
+                }
             }
         }
 
-        if (!(limitEntity == null)) {
+        if (limitEntityState != null) {
             const limitAve = parseFloat(limitEntityState.state);
-            mediumlimit = limitAve * limitMedMult;
-            highlimit = limitAve * limitHighMult;
-        };
-
-        // Combine the data sources
-        if (typeof (paststate) != 'undefined' && paststate != null) {
-            const pastattributes = this.reverseObject(paststate.attributes);
-            var ratesPast = pastattributes.rates;
-
-            ratesPast.forEach(function (key) {
-                combinedRates.push(key);
-                rates_totalnumber++;
-            });
+            if (!isNaN(limitAve)) {
+                mediumlimit = limitAve * limitMedMult;
+                highlimit = limitAve * limitHighMult;
+            }
         }
 
-        if (typeof (currentstate) != 'undefined' && currentstate != null) {
-            const currentattributes = this.reverseObject(currentstate.attributes);
-            var ratesCurrent = currentattributes.rates;
-
-            ratesCurrent.forEach(function (key) {
-                combinedRates.push(key);
-                rates_totalnumber++;
-            });
+        if (typeof paststate !== 'undefined' && paststate !== null) {
+            const pastattributes = this.reverseObject(paststate.attributes || {});
+            const ratesPast = pastattributes.rates || [];
+            ratesPast.forEach((key) => combinedRates.push(key));
         }
-        // Check to see if the 'rates' attribute exists on the chosen entity. If not, either the wrong entity
-        // was chosen or there's something wrong with the integration.
-        // The rates attribute also appears to be missing after a restart for a while - please see:
-        // https://github.com/BottlecapDave/HomeAssistant-OctopusEnergy/issues/135
-        if (!ratesCurrent) {
+
+        if (typeof currentstate !== 'undefined' && currentstate !== null) {
+            const currentattributes = this.reverseObject(currentstate.attributes || {});
+            const ratesCurrent = currentattributes.rates || [];
+            ratesCurrent.forEach((key) => combinedRates.push(key));
+        }
+
+        if (!currentstate || !currentstate.attributes || !currentstate.attributes.rates) {
             throw new Error("There are no rates assigned to that entity! Please check integration or chosen entity");
         }
 
-        if (typeof (futurestate) != 'undefined' && futurestate != null) {
-            const futureattributes = this.reverseObject(futurestate.attributes);
-            var ratesFuture = futureattributes.rates;
-
-            ratesFuture.forEach(function (key) {
-                combinedRates.push(key);
-                rates_totalnumber++;
-            });
+        if (typeof futurestate !== 'undefined' && futurestate !== null) {
+            const futureattributes = this.reverseObject(futurestate.attributes || {});
+            const ratesFuture = futureattributes.rates || [];
+            ratesFuture.forEach((key) => combinedRates.push(key));
         }
 
-        // This is critical to breaking down the columns properly. For now, there's now
-        // two loops doing the same thing which is not ideal.
-        // TODO: there should be one clear data process loop and one rendering loop? Or a function?
         var rates_list_length = 0;
         var cheapest_rate = 5000;
         var previous_rate = 0;
-
         var rates_currentNumber = 0;
         var previous_rates_day = "";
-        var rates_processingRow = 0;
         var filteredRates = [];
+        const nowMs = Date.now();
 
-        // filter out rates to display
-        combinedRates.forEach(function (key) {
+        combinedRates.forEach((key) => {
             const date_milli = Date.parse(key.start);
-            var date = new Date(date_milli);
-            var current_rates_day = dayFormatter.format(date);
-            rates_processingRow++;
-            var ratesToEvaluate = key.value_inc_vat * multiplier;
+            const date = new Date(date_milli);
+            const current_rates_day = dayFormatter.format(date);
+            const ratesToEvaluate = key.value_inc_vat * multiplier;
 
-            if ((showpast || (date - Date.parse(new Date()) > -1800000)) && (rateListLimit == 0 || rates_list_length < rateListLimit)) {
+            if ((showpast || (date_milli - nowMs > -1800000)) && (rateListLimit == 0 || rates_list_length < rateListLimit)) {
                 rates_currentNumber++;
 
-                // Find the cheapest rate that hasn't past yet
-                if ((ratesToEvaluate < cheapest_rate) && (date - Date.parse(new Date()) > -1800000)) cheapest_rate = ratesToEvaluate;
+                if ((ratesToEvaluate < cheapest_rate) && (date_milli - nowMs > -1800000)) {
+                    cheapest_rate = ratesToEvaluate;
+                }
 
-                // If we don't want to combine same values rates then just push them to new display array
                 if (!combinerate) {
                     filteredRates.push(key);
                     rates_list_length++;
-                }
-
-                if (combinerate &&
-                    (
-                        (rates_currentNumber == 1)
-                        || (current_rates_day != previous_rates_day)
-                        || (previous_rate != ratesToEvaluate)
-                    )
+                } else if (
+                    rates_currentNumber === 1 ||
+                    current_rates_day !== previous_rates_day ||
+                    previous_rate !== ratesToEvaluate
                 ) {
                     filteredRates.push(key);
                     rates_list_length++;
@@ -347,181 +473,178 @@ class OctopusEnergyRatesCard extends HTMLElement {
             }
         });
 
-        const rows_per_col = Math.ceil(rates_list_length / config.cols);
+        const numCols = Math.max(1, Math.min(effectiveCols, Math.max(1, rates_list_length)));
+        const rows_per_col = Math.ceil(rates_list_length / numCols);
 
-        var tables = "";
-        tables = tables.concat("<td><table class='sub_table'><tbody>");
-        var table = ""
-        var x = 1;
+        const columnHtmls = [];
+        let currentColumnRows = "";
+        let x = 1;
 
-        filteredRates.forEach(function (key) {
+        filteredRates.forEach((key) => {
             const date_milli = Date.parse(key.start);
-            var date = new Date(date_milli);
-            // The time formatted in Home Assistant's timezone (fallback to browser)
-            var time_locale = timeFormatter.format(date);
-            // If the showday config option is set, include the shortened weekday name in Home Assistant's timezone
-            var date_locale = (showday ? dayFormatter.format(date) + ' ' : '');
+            const date = new Date(date_milli);
+            const time_locale = timeFormatter.format(date);
+            const date_locale = (showday ? dayFormatter.format(date) + ' ' : '');
 
-            var colour = colours[1];  // Default to 'green' (index 1) (below low limit above 0)
+            var colour = colours[1];
             var isTargetTime = false;
             var targetTimeBackgroundColor = "";
             var targetTimePrefix = "";
-            // Check if the current time row corresponds to a target time
-            allSlotsTargetTimes.forEach(function (targetTime) {
+
+            allSlotsTargetTimes.forEach((targetTime) => {
                 const startTime = new Date(targetTime.start);
                 const endTime = new Date(targetTime.end);
                 if (date >= startTime && date < endTime) {
                     isTargetTime = true;
-                    targetTimeBackgroundColor = "' style='background-color: " + targetTime.color + ";";
+                    targetTimeBackgroundColor = ` style='background-color: ${targetTime.color};'`;
                     targetTimePrefix = targetTime.timePrefix ? targetTimePrefix + targetTime.timePrefix : targetTimePrefix;
                 }
             });
-            // Check if we've got any variable limits defined which will take precedence
-            additionalDynamicLimits.forEach(function (targetLimit) {
+
+            additionalDynamicLimits.forEach((targetLimit) => {
                 if (key.value_inc_vat <= targetLimit.limit) {
                     isTargetTime = true;
-                    targetTimeBackgroundColor = "' style='background-color: " + targetLimit.color + ";";
+                    targetTimeBackgroundColor = ` style='background-color: ${targetLimit.color};'`;
                     targetTimePrefix = targetLimit.timePrefix ? targetTimePrefix + targetLimit.timePrefix : targetTimePrefix;
                 }
             });
 
-            // Add the extra space at the end of the prefix if it's not empty
             targetTimePrefix = targetTimePrefix ? targetTimePrefix + " " : targetTimePrefix;
             var isCurrentTime = false;
-            if ((date - Date.parse(new Date()) > -1800000) && (date < new Date())) {
+            if ((date_milli - nowMs > -1800000) && (date < new Date())) {
                 if (showpast) {
                     isCurrentTime = true;
-                    targetTimeBackgroundColor = "' style='background-color: gray;"; // Apply gray background
-                };
-            };
-
+                    targetTimeBackgroundColor = " style='background-color: #64748b;'";
+                }
+            }
 
             var valueToDisplay = key.value_inc_vat * multiplier;
-            // Apply bold styling if the current time is a target time
             var boldStyle = isCurrentTime ? "current " : "";
-            boldStyle = isTargetTime ? boldStyle + "time_highlight" : boldStyle + "";
-            if (cheapest && (valueToDisplay == cheapest_rate && cheapest_rate > 0)) colour = colours[5];
-            else if (cheapest && (valueToDisplay == cheapest_rate && cheapest_rate <= 0)) colour = colours[6];
-            else if (valueToDisplay > highlimit) colour = colours[3]; //red (import) / green (export)
-            else if (valueToDisplay > mediumlimit) colour = colours[2]; // orange (import) / orange (export)
-            else if (valueToDisplay > lowlimit) colour = colours[0]; // lightgreen  (import) / red (export)
-            else if (valueToDisplay <= 0) colour = colours[4]; // below 0 - blue (import/export)
+            boldStyle = isTargetTime ? boldStyle + "time_highlight" : boldStyle;
 
-            if (showpast || (date - Date.parse(new Date()) > -1800000)) {
-                table = table.concat("<tr class='rate_row'><td class='time " + boldStyle + " " + "time_" + colour + targetTimeBackgroundColor + "'>" + targetTimePrefix + date_locale + time_locale +
-                    "</td><td class='rate " + colour + "'>" + valueToDisplay.toFixed(roundUnits) + unitstr + "</td></tr>");
+            if (cheapest && (valueToDisplay === cheapest_rate && cheapest_rate > 0)) {
+                colour = colours[5];
+            } else if (cheapest && (valueToDisplay === cheapest_rate && cheapest_rate <= 0)) {
+                colour = colours[6];
+            } else if (valueToDisplay > highlimit) {
+                colour = colours[3];
+            } else if (valueToDisplay > mediumlimit) {
+                colour = colours[2];
+            } else if (valueToDisplay > lowlimit) {
+                colour = colours[0];
+            } else if (valueToDisplay <= 0) {
+                colour = colours[4];
+            }
 
-                if (x % rows_per_col == 0) {
-                    tables = tables.concat(table);
-                    table = "";
-                    if (rates_list_length != x) {
-                        tables = tables.concat("</tbody></table></td>");
-                        tables = tables.concat("<td><table class='sub_table'><tbody>");
-                    }
-                };
+            if (showpast || (date_milli - nowMs > -1800000)) {
+                currentColumnRows += `
+                    <tr class='rate_row'>
+                        <td class='time ${boldStyle} time_${colour}'${targetTimeBackgroundColor}>
+                            ${targetTimePrefix}${date_locale}${time_locale}
+                        </td>
+                        <td class='rate ${colour}'>
+                            ${valueToDisplay.toFixed(roundUnits)}${unitstr}
+                        </td>
+                    </tr>
+                `;
+
+                if (x % rows_per_col === 0 || x === rates_list_length) {
+                    columnHtmls.push(`
+                        <div class="rates-col">
+                            <table class="sub_table">
+                                <tbody>
+                                    ${currentColumnRows}
+                                </tbody>
+                            </table>
+                        </div>
+                    `);
+                    currentColumnRows = "";
+                }
                 x++;
             }
         });
-        tables = tables.concat(table);
-        tables = tables.concat("</tbody></table></td>");
+
+        const isMobileClass = this._isMobile ? 'is-mobile' : '';
+        const isCompactClass = (config.compact_mobile && this._isMobile) ? 'compact-mode' : '';
 
         this.content.innerHTML = `
-        <table class="main">
-            <tr>
-                ${tables}
-            </tr>
-        </table>
+            <div class="rates-container ${isMobileClass} ${isCompactClass}">
+                <div class="rates-wrapper" style="--col-count: ${numCols};">
+                    ${columnHtmls.join('')}
+                </div>
+            </div>
         `;
     }
 
     reverseObject(object) {
         var newObject = {};
-        var keys = [];
-
-        for (var key in object) {
-            keys.push(key);
-        }
-
+        var keys = Object.keys(object || {});
         for (var i = keys.length - 1; i >= 0; i--) {
-            var value = object[keys[i]];
-            newObject[keys[i]] = value;
+            newObject[keys[i]] = object[keys[i]];
         }
-
         return newObject;
     }
 
     setConfig(config) {
         if (!config.currentEntity) {
-            throw new Error('You need to define an entity');
+            throw new Error('You need to define an entity (e.g. currentEntity: event.octopus_energy_electricity_..._current_day_rates)');
         }
 
         const defaultConfig = {
             targetTimesEntities: null,
-            // Additional limits specified in a similar format as targetTimesEntities
-            // but they take input_numbers as input
             additionalDynamicLimits: null,
-            // Controls how many columns the rates split in to
             cols: 1,
-            // Show rates that already happened in the card
+            mobile_cols: 1,
+            auto_cols: false,
+            mobile_breakpoint: 460,
+            compact_mobile: true,
             showpast: false,
-            // Show the day of the week with the time
             showday: false,
-            // Use 12 or 24 hour time
             hour12: true,
-            // Controls the title of the card
             title: 'Agile Rates',
-            // Colour controls:
-            // If the price is above highlimit, the row is marked red.
-            // If the price is above mediumlimit, the row is marked orange.
-            // If the price is above lowlimit, the row is marked dark green.
-            // If the price is below lowlimit, the row is marked green.
-            // If the price is below 0, the row is marked blue.
             lowlimit: 5,
             mediumlimit: 20,
             highlimit: 30,
-            // Entity to use for dynamic limits, above are ignored if limitEntity is set. 
             limitEntity: null,
             highLimitMultiplier: 1.1,
             mediumLimitMultiplier: 0.8,
-            // Controls the rounding of the units of the rate
             roundUnits: 2,
-            // The unit string to show if units are shown after each rate
             unitstr: 'p/kWh',
-            // Make the colouring happen in reverse, for export rates
             exportrates: false,
-            // Higlight the cheapest rate
             cheapest: false,
-            // Combine equal rates
             combinerate: false,
-            // multiple rate values for pence (100) or pounds (1)
             multiplier: 100,
-            // Limit display to next X rows
             rateListLimit: 0,
-            // How often should the card refresh in seconds
             cardRefreshIntervalSeconds: 60
         };
 
-        const cardConfig = {
+        this._config = {
             ...defaultConfig,
             ...config,
         };
 
-        this._config = cardConfig;
+        if (this._hass) {
+            this._render();
+        }
     }
 
-    // The height of your card. Home Assistant uses this to automatically
-    // distribute all cards over the available columns.
     getCardSize() {
-        return 3;
+        if (!this._config) return 3;
+        const cols = this._isMobile ? (this._config.mobile_cols || 1) : (this._config.cols || 1);
+        return Math.ceil(24 / cols);
     }
 }
 
-customElements.define('octopus-energy-rates-card', OctopusEnergyRatesCard);
-// Configure the preview in the Lovelace card picker
+if (!customElements.get('octopus-energy-rates-card')) {
+    customElements.define('octopus-energy-rates-card', OctopusEnergyRatesCard);
+}
+
 window.customCards = window.customCards || [];
-window.customCards.push({
-    type: 'octopus-energy-rates-card',
-    name: 'Octopus Energy Rates Card',
-    preview: false,
-    description: 'This card displays the energy rates for Octopus Energy',
-});
+if (!window.customCards.some(c => c.type === 'octopus-energy-rates-card')) {
+    window.customCards.push({
+        type: 'octopus-energy-rates-card',
+        name: 'Octopus Energy Rates Card (Mobile Friendly)',
+        preview: true,
+        description: 'Displays 30-minute energy rates for Octopus Energy tariffs with mobile-responsive layouts',
+    });
+}

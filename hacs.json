@@ -1,4 +1,5 @@
 {
-    "name": "octopus-energy-rates-card",
-    "render_readme": true
+  "name": "Octopus Energy Rates Card (Mobile Friendly)",
+  "filename": "octopus-energy-rates-card.js",
+  "render_readme": true
 }
