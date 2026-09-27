@@ -6,6 +6,10 @@ This lovelace card displays the Octopus Energy rate prices per each 30 minute sl
 
 This provides a convenient, at a glance way to observe the prices on tariffs that change their price every 30 minutes, for example Octopus Agile.
 
+Forked from URL
+
+Added Mobile Friendly display using AI
+
 #### Installation
 ##### HACS
 The easiest way to install it is via [HACS (Home Assistant Community Store)](https://github.com/hacs/frontend). This will ensure you get updates automatically too. 
